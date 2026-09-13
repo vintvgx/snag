@@ -3,3 +3,4 @@ python-dotenv==1.0.1
 requests==2.32.3
 supabase==2.10.0
 gunicorn==23.0.0
+beautifulsoup4==4.12.3

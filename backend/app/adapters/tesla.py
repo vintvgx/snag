@@ -1,13 +1,17 @@
-import json
 import logging
+import os
+import re
+from urllib.parse import urlencode
 
 import requests
+from bs4 import BeautifulSoup
 
 from app.adapters.base import AdapterFetchError, AdapterSchemaError
 
 logger = logging.getLogger(__name__)
 
-INVENTORY_URL = "https://www.tesla.com/inventory/api/v4/inventory-results"
+TESLA_BASE_URL = "https://www.tesla.com"
+SCRAPER_API_URL = "https://api.scraperapi.com"
 
 # Public filter vocabulary (matches the watch filter schema in the spec,
 # e.g. hard.model = "model3") mapped to Tesla's internal query codes.
@@ -18,96 +22,179 @@ MODEL_CODES = {
     "modelx": "mx",
 }
 
-# Real browser-like headers — the endpoint is protected by Akamai and can
-# reject requests that don't look like they came from a browser tab that
-# actually loaded tesla.com first. Even with these, expect occasional
-# blocks; see Section 15/17 of the product doc.
-REQUEST_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
-    ),
-    "Accept": "application/json, text/plain, */*",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Origin": "https://www.tesla.com",
-}
+# Tesla's inventory pages (and the internal JSON API behind them) sit behind
+# Akamai. Confirmed live, from two different network origins: plain
+# `requests`, a Chrome-TLS-impersonated client, and a real headless Chromium
+# with full JS execution were ALL denied outright. That rules out "need a
+# better fingerprint" — Akamai is blocking by IP/ASN reputation, which means
+# any datacenter host (Railway included) hits the same wall regardless of
+# client sophistication. So this adapter routes through a residential-proxy
+# scraping API (ScraperAPI by default) instead of calling Tesla directly.
+# Swapping providers only means changing SCRAPER_API_URL/params below — the
+# parsing and adapter contract don't change.
+PRICE_RE = re.compile(r"\$([\d,]+)")
+CONDITION_RE = re.compile(
+    r"^(?P<year>\d{4})\s+(?P<repaired>Repaired\s+)?(?P<label>.+?) with "
+    r"(?P<odometer>[\d,]+)\s*mi$"
+)
+LOCATION_RE = re.compile(r"^Located in (?P<city>.+)$")
 
 
 class TeslaInventoryAdapter:
     source_key = "tesla"
-    recommended_poll_interval_minutes = 20
+    # Car turnover is slow enough that hourly is plenty — also keeps the
+    # scraping-API bill trivial at MVP scale (one request per watch/hour).
+    recommended_poll_interval_minutes = 60
 
     def fetch(self, filters: dict) -> list[dict]:
+        api_key = os.environ.get("SCRAPER_API_KEY")
+        if not api_key:
+            raise AdapterFetchError(
+                "SCRAPER_API_KEY is not set. Tesla's inventory pages are "
+                "behind Akamai bot protection that blocks direct requests "
+                "from datacenter IPs (Railway included) even with a real "
+                "headless browser — confirmed live. This adapter fetches "
+                "through a residential-proxy scraping API instead; sign up "
+                "for one (e.g. scraperapi.com) and set SCRAPER_API_KEY."
+            )
+
         model_key = filters.get("model", "model3")
         model = MODEL_CODES.get(model_key, "m3")
-        query = {
-            "query": {
-                "model": model,
-                "condition": filters.get("condition", "used"),
-                "options": {},
-                "arrangeby": "Price",
-                "order": "asc",
-                "market": "US",
-                "language": "en",
-                "super_region": "north america",
-                "zip": filters.get("zip", "02026"),
-                "range": filters.get("range", 25),
-            },
-            "offset": 0,
-            "count": filters.get("count", 24),
-            "outsideOffset": 0,
-            "outsideSearch": False,
-        }
-        # Tesla's endpoint doesn't expose a documented year/drivetrain param;
-        # the filter/match engine (Phase 1) applies those against `attrs`
-        # after normalization instead of here.
+        condition = filters.get("condition", "used")
+        target_url = self._build_target_url(model, condition, filters)
 
         try:
             response = requests.get(
-                INVENTORY_URL,
-                params={"query": json.dumps(query)},
-                headers=REQUEST_HEADERS,
-                timeout=15,
+                SCRAPER_API_URL,
+                params={
+                    "api_key": api_key,
+                    "url": target_url,
+                    "country_code": "us",
+                },
+                timeout=60,
             )
         except requests.RequestException as exc:
-            raise AdapterFetchError(f"Tesla inventory request failed: {exc}") from exc
+            raise AdapterFetchError(f"Scraper API request failed: {exc}") from exc
 
         if response.status_code != 200:
             snippet = response.text[:300].replace("\n", " ")
             raise AdapterFetchError(
-                f"Tesla inventory returned HTTP {response.status_code}: {snippet}"
+                f"Scraper API returned HTTP {response.status_code} for "
+                f"{target_url}: {snippet}"
             )
 
-        try:
-            payload = response.json()
-        except ValueError as exc:
+        html = response.text
+
+        if "Access Denied" in html and "edgesuite.net" in html:
+            raise AdapterFetchError(
+                "Tesla returned an Akamai block page even through the "
+                "proxy — the proxy pool may need a different tier/region, "
+                "or Tesla has tightened detection further."
+            )
+
+        if "inventory-search-app" not in html:
             raise AdapterSchemaError(
-                f"Tesla inventory response wasn't JSON: {response.text[:300]!r}"
-            ) from exc
+                "Response didn't look like a Tesla inventory page at all "
+                "(missing the 'inventory-search-app' marker) — either "
+                "Tesla changed the page structure or the scraper proxy "
+                f"returned something else. First 300 chars: {html[:300]!r}"
+            )
 
-        if "results" not in payload or not isinstance(payload["results"], list):
+        return self._parse_cards(html, model_key)
+
+    def _build_target_url(self, model: str, condition: str, filters: dict) -> str:
+        query = urlencode(
+            {
+                "arrangeby": "plh",
+                "zip": filters.get("zip", "02026"),
+                "range": filters.get("range", 25),
+            }
+        )
+        return f"{TESLA_BASE_URL}/inventory/{condition}/{model}?{query}"
+
+    def _parse_cards(self, html: str, model_key: str) -> list[dict]:
+        soup = BeautifulSoup(html, "html.parser")
+        cards = soup.select("article.result.card[data-id]")
+
+        raw_listings = []
+        for card in cards:
+            vin = card.get("data-id", "").replace(
+                "-search-result-container", ""
+            ).strip()
+            if not vin:
+                continue
+
+            trim_el = card.select_one(".trim-name")
+            trim = trim_el.get_text(strip=True) if trim_el else None
+
+            price = self._extract_price(card)
+            year, odometer, is_repaired, city = self._extract_detail_lines(card)
+
+            if price is None or year is None:
+                logger.warning(
+                    "Skipping unparseable Tesla card vin=%s price=%s year=%s "
+                    "— selectors may need updating for a layout change",
+                    vin,
+                    price,
+                    year,
+                )
+                continue
+
+            raw_listings.append(
+                {
+                    "vin": vin,
+                    "trim": trim,
+                    "price": price,
+                    "year": year,
+                    "odometer": odometer,
+                    "is_repaired": is_repaired,
+                    "city": city,
+                    "_requested_model": model_key,
+                }
+            )
+
+        if cards and not raw_listings:
             raise AdapterSchemaError(
-                "Tesla inventory response is missing a 'results' list — "
-                f"top-level keys were: {list(payload.keys())}. "
-                "Tesla's response shape may have changed; update the adapter."
+                f"Found {len(cards)} Tesla result cards but couldn't parse "
+                "price/year out of any of them — Tesla's card markup likely "
+                "changed. Update TeslaInventoryAdapter's parsing regexes."
             )
 
-        if payload["results"]:
-            logger.info(
-                "Tesla inventory sample result keys: %s",
-                list(payload["results"][0].keys()),
-            )
+        return raw_listings
 
-        # Tag each raw result with the model code it was fetched under, so
-        # normalize() can build an accurate deep link without needing the
-        # original filters passed back in.
-        for result in payload["results"]:
-            result["_requested_model"] = model_key
+    def _extract_price(self, card) -> int | None:
+        # The visible cash price lives in this span; the hidden APR-terms
+        # tooltip (sibling markup) also contains a "$X down" dollar amount,
+        # so we deliberately scope to this element rather than the whole
+        # price block to avoid picking up the down-payment figure instead.
+        price_el = card.select_one("span.tds-text--medium.tds-text--contrast-high")
+        if not price_el:
+            return None
+        matches = PRICE_RE.findall(price_el.get_text(strip=True))
+        if not matches:
+            return None
+        # Format is "Est $<monthly>/mo financing • $<cash price>" — last
+        # match is the total price.
+        return int(matches[-1].replace(",", ""))
 
-        return payload["results"]
+    def _extract_detail_lines(self, card):
+        year = odometer = None
+        is_repaired = False
+        city = None
+        for line_el in card.select("section.card-info-details > div.tds-text--contrast-low"):
+            line = line_el.get_text(strip=True)
+            cond_match = CONDITION_RE.match(line)
+            loc_match = LOCATION_RE.match(line)
+            if cond_match:
+                year = int(cond_match.group("year"))
+                odometer = int(cond_match.group("odometer").replace(",", ""))
+                is_repaired = bool(cond_match.group("repaired"))
+            elif loc_match:
+                city = loc_match.group("city")
+        return year, odometer, is_repaired, city
 
     def get_stable_id(self, raw: dict) -> str:
-        vin = raw.get("VIN")
+        vin = raw.get("vin")
         if not vin:
             raise AdapterSchemaError(
                 f"Tesla listing missing VIN — keys were: {list(raw.keys())}"
@@ -116,17 +203,26 @@ class TeslaInventoryAdapter:
 
     def normalize(self, raw: dict) -> dict:
         vin = self.get_stable_id(raw)
-        price = raw.get("Price") or raw.get("PurchasePrice") or raw.get("InventoryPrice")
+        price = raw.get("price")
         if price is None:
             raise AdapterSchemaError(
-                f"Tesla listing {vin} missing a price field — keys were: {list(raw.keys())}"
+                f"Tesla listing {vin} missing a price — keys were: {list(raw.keys())}"
             )
 
-        year = raw.get("Year") or raw.get("year")
-        trim = raw.get("TrimName") or raw.get("Trim")
-        drivetrain = raw.get("DrivetrainOptions") or raw.get("Drivetrain")
+        year = raw.get("year")
+        trim = raw.get("trim")
+        drivetrain = None
+        if trim:
+            if "All-Wheel Drive" in trim:
+                drivetrain = "AWD"
+            elif "Rear-Wheel Drive" in trim:
+                drivetrain = "RWD"
+
         title_parts = [str(part) for part in (year, trim) if part]
         title = " ".join(title_parts) or f"Tesla ({vin})"
+
+        model_key = raw.get("_requested_model", "model3")
+        model_code = MODEL_CODES.get(model_key, "m3")
 
         return {
             "price": price,
@@ -135,21 +231,18 @@ class TeslaInventoryAdapter:
                 "year": year,
                 "trim": trim,
                 "drivetrain": drivetrain,
-                "odometer": raw.get("Odometer"),
-                "color": raw.get("PAINT") or raw.get("Color"),
+                "odometer": raw.get("odometer"),
+                "is_repaired": raw.get("is_repaired", False),
             },
             "location": {
-                "city": raw.get("City"),
-                "state": raw.get("StateProvince") or raw.get("State"),
-                "zip": raw.get("Zip") or raw.get("PostalCode"),
+                "city": raw.get("city"),
+                "state": None,
+                "zip": None,
             },
-            # Best-effort deep link — verify against a real response and
-            # correct once Akamai stops blocking this sandbox's requests.
-            "url": (
-                f"https://www.tesla.com/"
-                f"{MODEL_CODES.get(raw.get('_requested_model', 'model3'), 'm3')}"
-                f"/order/{vin}"
-            ),
+            # Best-effort deep link — verify against a real fetch once
+            # SCRAPER_API_KEY is set; Tesla's used-inventory detail route
+            # may differ from this guess.
+            "url": f"{TESLA_BASE_URL}/inventory/used/{model_code}/{vin}",
             "seller_id": "tesla-direct",
         }
 
