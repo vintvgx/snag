@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+from typing import Callable
 from urllib.parse import urlencode
 
 import requests
@@ -13,6 +14,8 @@ logger = logging.getLogger(__name__)
 TESLA_BASE_URL = "https://www.tesla.com"
 SCRAPER_API_URL = "https://api.scraperapi.com"
 
+HtmlFetcher = Callable[[str], str]
+
 # Public filter vocabulary (matches the watch filter schema in the spec,
 # e.g. hard.model = "model3") mapped to Tesla's internal query codes.
 MODEL_CODES = {
@@ -22,16 +25,6 @@ MODEL_CODES = {
     "modelx": "mx",
 }
 
-# Tesla's inventory pages (and the internal JSON API behind them) sit behind
-# Akamai. Confirmed live, from two different network origins: plain
-# `requests`, a Chrome-TLS-impersonated client, and a real headless Chromium
-# with full JS execution were ALL denied outright. That rules out "need a
-# better fingerprint" — Akamai is blocking by IP/ASN reputation, which means
-# any datacenter host (Railway included) hits the same wall regardless of
-# client sophistication. So this adapter routes through a residential-proxy
-# scraping API (ScraperAPI by default) instead of calling Tesla directly.
-# Swapping providers only means changing SCRAPER_API_URL/params below — the
-# parsing and adapter contract don't change.
 PRICE_RE = re.compile(r"\$([\d,]+)")
 CONDITION_RE = re.compile(
     r"^(?P<year>\d{4})\s+(?P<repaired>Repaired\s+)?(?P<label>.+?) with "
@@ -40,64 +33,89 @@ CONDITION_RE = re.compile(
 LOCATION_RE = re.compile(r"^Located in (?P<city>.+)$")
 
 
+def fetch_html_via_scraper_api(target_url: str) -> str:
+    """Default HTML transport: a residential-proxy scraping API.
+
+    Tesla's inventory pages (and the internal JSON API behind them) sit
+    behind Akamai. Confirmed live, from two different network origins:
+    plain `requests`, a Chrome-TLS-impersonated client, and a real headless
+    Chromium with full JS execution were ALL denied outright. That rules
+    out "need a better fingerprint" — Akamai is blocking by IP/ASN
+    reputation, which means any datacenter host (Railway included) hits
+    the same wall regardless of client sophistication. This is what
+    Railway (and anything else running from a datacenter) should use.
+    Swapping providers only means editing this function — the adapter's
+    parsing/contract doesn't change.
+    """
+    api_key = os.environ.get("SCRAPER_API_KEY")
+    if not api_key:
+        raise AdapterFetchError(
+            "SCRAPER_API_KEY is not set. Tesla's inventory pages are "
+            "behind Akamai bot protection that blocks direct requests "
+            "from datacenter IPs (Railway included) even with a real "
+            "headless browser — confirmed live. This adapter fetches "
+            "through a residential-proxy scraping API instead; sign up "
+            "for one (e.g. scraperapi.com) and set SCRAPER_API_KEY."
+        )
+
+    try:
+        response = requests.get(
+            SCRAPER_API_URL,
+            params={
+                "api_key": api_key,
+                "url": target_url,
+                "country_code": "us",
+            },
+            timeout=60,
+        )
+    except requests.RequestException as exc:
+        raise AdapterFetchError(f"Scraper API request failed: {exc}") from exc
+
+    if response.status_code != 200:
+        snippet = response.text[:300].replace("\n", " ")
+        raise AdapterFetchError(
+            f"Scraper API returned HTTP {response.status_code} for "
+            f"{target_url}: {snippet}"
+        )
+
+    return response.text
+
+
 class TeslaInventoryAdapter:
     source_key = "tesla"
     # Car turnover is slow enough that hourly is plenty — also keeps the
     # scraping-API bill trivial at MVP scale (one request per watch/hour).
     recommended_poll_interval_minutes = 60
 
-    def fetch(self, filters: dict) -> list[dict]:
-        api_key = os.environ.get("SCRAPER_API_KEY")
-        if not api_key:
-            raise AdapterFetchError(
-                "SCRAPER_API_KEY is not set. Tesla's inventory pages are "
-                "behind Akamai bot protection that blocks direct requests "
-                "from datacenter IPs (Railway included) even with a real "
-                "headless browser — confirmed live. This adapter fetches "
-                "through a residential-proxy scraping API instead; sign up "
-                "for one (e.g. scraperapi.com) and set SCRAPER_API_KEY."
-            )
+    def __init__(self, html_fetcher: HtmlFetcher | None = None):
+        # Injectable so a non-datacenter caller (e.g. a script running on a
+        # home network, where Tesla's Akamai config doesn't block you) can
+        # swap in a plain Playwright/requests fetch instead of paying for
+        # the scraping API. The parsing/validation below is identical
+        # either way — only the transport differs.
+        self._html_fetcher = html_fetcher or fetch_html_via_scraper_api
 
+    def fetch(self, filters: dict) -> list[dict]:
         model_key = filters.get("model", "model3")
         model = MODEL_CODES.get(model_key, "m3")
         condition = filters.get("condition", "used")
         target_url = self._build_target_url(model, condition, filters)
 
-        try:
-            response = requests.get(
-                SCRAPER_API_URL,
-                params={
-                    "api_key": api_key,
-                    "url": target_url,
-                    "country_code": "us",
-                },
-                timeout=60,
-            )
-        except requests.RequestException as exc:
-            raise AdapterFetchError(f"Scraper API request failed: {exc}") from exc
-
-        if response.status_code != 200:
-            snippet = response.text[:300].replace("\n", " ")
-            raise AdapterFetchError(
-                f"Scraper API returned HTTP {response.status_code} for "
-                f"{target_url}: {snippet}"
-            )
-
-        html = response.text
+        html = self._html_fetcher(target_url)
 
         if "Access Denied" in html and "edgesuite.net" in html:
             raise AdapterFetchError(
-                "Tesla returned an Akamai block page even through the "
-                "proxy — the proxy pool may need a different tier/region, "
-                "or Tesla has tightened detection further."
+                "Tesla returned an Akamai block page — this fetch strategy "
+                "no longer clears their bot protection (proxy tier/region, "
+                "IP reputation, or Tesla's detection may have changed)."
             )
 
         if "inventory-search-app" not in html:
             raise AdapterSchemaError(
                 "Response didn't look like a Tesla inventory page at all "
                 "(missing the 'inventory-search-app' marker) — either "
-                "Tesla changed the page structure or the scraper proxy "
-                f"returned something else. First 300 chars: {html[:300]!r}"
+                "Tesla changed the page structure or the fetch returned "
+                f"something else. First 300 chars: {html[:300]!r}"
             )
 
         return self._parse_cards(html, model_key)

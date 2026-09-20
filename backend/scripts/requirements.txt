@@ -1,0 +1,5 @@
+# Only needed for the local scripts/ tools (e.g. tesla_watch.py) — kept out
+# of the main requirements.txt so Railway's deploy doesn't pull in a full
+# browser binary it will never use (Railway goes through the scraping API
+# instead; see app/adapters/tesla.py).
+playwright==1.62.0

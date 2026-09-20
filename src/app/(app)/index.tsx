@@ -1,98 +1,135 @@
-import * as Device from 'expo-device';
-import { Platform, StyleSheet } from 'react-native';
+import { useState } from 'react';
+import { ActivityIndicator, FlatList, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { AnimatedIcon } from '@/components/animated-icon';
-import { HintRow } from '@/components/hint-row';
+import { ListingCard } from '@/components/listing-card';
+import { SearchFiltersForm } from '@/components/search-filters';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { WebBadge } from '@/components/web-badge';
-import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+import { Spacing } from '@/constants/theme';
+import { useSearchListings } from '@/hooks/use-search-listings';
+import { useTheme } from '@/hooks/use-theme';
+import { SearchFilters } from '@/lib/api-client';
 
-function getDevMenuHint() {
-  if (Platform.OS === 'web') {
-    return <ThemedText type="small">use browser devtools</ThemedText>;
-  }
-  if (Device.isDevice) {
-    return (
-      <ThemedText type="small">
-        shake device or press <ThemedText type="code">m</ThemedText> in terminal
-      </ThemedText>
-    );
-  }
-  const shortcut = Platform.OS === 'android' ? 'cmd+m (or ctrl+m)' : 'cmd+d';
-  return (
-    <ThemedText type="small">
-      press <ThemedText type="code">{shortcut}</ThemedText>
-    </ThemedText>
-  );
-}
+const DEFAULT_FILTERS: SearchFilters = {
+  zip: '02026',
+  range: 25,
+};
 
 export default function HomeScreen() {
+  const [filters, setFilters] = useState<SearchFilters>(DEFAULT_FILTERS);
+  const { data, isLoading, isFetching, isError, error, refetch } = useSearchListings(filters);
+
+  console.warn("ERROR:", error?.message)
+
   return (
     <ThemedView style={styles.container}>
-      <SafeAreaView style={styles.safeArea}>
-        <ThemedView style={styles.heroSection}>
-          <AnimatedIcon />
-          <ThemedText type="title" style={styles.title}>
-            Welcome to&nbsp;Expo
-          </ThemedText>
-        </ThemedView>
-
-        <ThemedText type="code" style={styles.code}>
-          get started
-        </ThemedText>
-
-        <ThemedView type="backgroundElement" style={styles.stepContainer}>
-          <HintRow
-            title="Try editing"
-            hint={<ThemedText type="code">src/app/index.tsx</ThemedText>}
-          />
-          <HintRow title="Dev tools" hint={getDevMenuHint()} />
-          <HintRow
-            title="Fresh start"
-            hint={<ThemedText type="code">npm run reset-project</ThemedText>}
-          />
-        </ThemedView>
-
-        {Platform.OS === 'web' && <WebBadge />}
+      <SafeAreaView style={styles.safeArea} edges={['top']}>
+        <FlatList
+          data={data?.listings ?? []}
+          keyExtractor={(item) => item.id}
+          renderItem={({ item }) => <ListingCard listing={item} />}
+          ItemSeparatorComponent={() => <ThemedView style={styles.separator} />}
+          ListHeaderComponent={
+            <ThemedView style={styles.header}>
+              <ThemedText type="subtitle" themeColor="primary" style={styles.wordmark}>
+                SNAG
+              </ThemedText>
+              <SearchFiltersForm value={filters} onSubmit={setFilters} isLoading={isFetching} />
+              <ResultsSummary
+                isLoading={isLoading}
+                isError={isError}
+                errorMessage={error?.message}
+                count={data?.count}
+                onRetry={refetch}
+              />
+            </ThemedView>
+          }
+          ListEmptyComponent={
+            !isLoading && !isError ? (
+              <ThemedText type="small" themeColor="textSecondary" style={styles.emptyText}>
+                No matches for these filters yet.
+              </ThemedText>
+            ) : null
+          }
+          contentContainerStyle={styles.listContent}
+        />
       </SafeAreaView>
     </ThemedView>
   );
 }
 
+function ResultsSummary({
+  isLoading,
+  isError,
+  errorMessage,
+  count,
+  onRetry,
+}: {
+  isLoading: boolean;
+  isError: boolean;
+  errorMessage?: string;
+  count?: number;
+  onRetry: () => void;
+}) {
+  const theme = useTheme();
+
+  if (isLoading) {
+    return <ActivityIndicator style={styles.summarySpacing} color={theme.primary} />;
+  }
+
+  if (isError) {
+    return (
+      <ThemedView style={styles.summarySpacing}>
+        <ThemedText type="small" themeColor="primary">
+          {errorMessage ?? 'Something went wrong reaching the search API.'}
+        </ThemedText>
+        <Pressable onPress={onRetry}>
+          <ThemedText type="linkPrimary">Retry</ThemedText>
+        </Pressable>
+      </ThemedView>
+    );
+  }
+
+  if (count != null) {
+    return (
+      <ThemedText type="small" themeColor="textSecondary" style={styles.summarySpacing}>
+        {count} result{count === 1 ? '' : 's'}
+      </ThemedText>
+    );
+  }
+
+  return null;
+}
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    justifyContent: 'center',
-    flexDirection: 'row',
   },
   safeArea: {
     flex: 1,
-    paddingHorizontal: Spacing.four,
-    alignItems: 'center',
-    gap: Spacing.three,
-    paddingBottom: BottomTabInset + Spacing.three,
-    maxWidth: MaxContentWidth,
   },
-  heroSection: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    flex: 1,
+  header: {
     paddingHorizontal: Spacing.four,
-    gap: Spacing.four,
+    paddingBottom: Spacing.three,
+    gap: Spacing.two,
   },
-  title: {
+  wordmark: {
+    letterSpacing: 2,
+  },
+  summarySpacing: {
+    marginTop: Spacing.one,
+    gap: Spacing.one,
+  },
+  listContent: {
+    paddingHorizontal: Spacing.four,
+    paddingBottom: Spacing.six,
+  },
+  separator: {
+    height: Spacing.two,
+  },
+  emptyText: {
     textAlign: 'center',
-  },
-  code: {
-    textTransform: 'uppercase',
-  },
-  stepContainer: {
-    gap: Spacing.three,
-    alignSelf: 'stretch',
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.four,
-    borderRadius: Spacing.four,
+    marginTop: Spacing.four,
   },
 });

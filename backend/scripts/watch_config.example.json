@@ -1,0 +1,10 @@
+{
+  "model": "model3",
+  "condition": "used",
+  "zip": "02026",
+  "range": 25,
+  "year_min": 2023,
+  "year_max": 2023,
+  "drivetrain": "RWD",
+  "price_max": 34000
+}

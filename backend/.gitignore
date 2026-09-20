@@ -4,3 +4,8 @@ __pycache__/
 venv/
 .env
 .env.local
+
+# Personal home-network Tesla watcher — your own search criteria and match
+# history, not shared/committed.
+scripts/watch_config.json
+scripts/.tesla_watch_state.json
