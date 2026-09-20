@@ -12,6 +12,14 @@ const currencyFormatter = new Intl.NumberFormat('en-US', {
   maximumFractionDigits: 0,
 });
 
+const SOURCE_LABELS: Record<string, string> = {
+  tesla: 'Tesla',
+  ebay: 'eBay',
+  amazon: 'Amazon',
+  google: 'via Google',
+  web: 'Web',
+};
+
 function Chip({ label }: { label: string }) {
   const theme = useTheme();
   return (
@@ -21,18 +29,29 @@ function Chip({ label }: { label: string }) {
   );
 }
 
+function buildChips(attrs: Listing['attrs']): string[] {
+  const chips: (string | null | undefined)[] = [
+    attrs.year != null ? String(attrs.year) : null,
+    attrs.trim != null ? String(attrs.trim) : null,
+    attrs.drivetrain != null ? String(attrs.drivetrain) : null,
+    attrs.odometer != null ? `${Number(attrs.odometer).toLocaleString()} mi` : null,
+    attrs.brand != null ? String(attrs.brand) : null,
+    attrs.condition != null ? String(attrs.condition) : null,
+    attrs.availability != null
+      ? String(attrs.availability).replace(/^https?:\/\/schema\.org\//, '')
+      : null,
+  ];
+  // De-dupe (brand/condition can coincide across sources) while preserving order.
+  return Array.from(new Set(chips.filter((chip): chip is string => Boolean(chip))));
+}
+
 export function ListingCard({ listing }: { listing: Listing }) {
   const theme = useTheme();
-  const { attrs, location, seller } = listing;
+  const { attrs, location, seller, source } = listing;
 
-  const chips = [
-    attrs.year && String(attrs.year),
-    attrs.trim,
-    attrs.drivetrain,
-    attrs.odometer != null && `${Number(attrs.odometer).toLocaleString()} mi`,
-  ].filter(Boolean) as string[];
-
+  const chips = buildChips(attrs);
   const locationLabel = [location.city, location.state].filter(Boolean).join(', ');
+  const subtitle = locationLabel || seller.display_name || 'Online listing';
 
   return (
     <Pressable
@@ -40,13 +59,15 @@ export function ListingCard({ listing }: { listing: Listing }) {
       style={({ pressed }) => [styles.pressable, { opacity: pressed ? 0.8 : 1 }]}>
       <ThemedView type="backgroundElement" style={styles.card}>
         <View style={styles.headerRow}>
-          <ThemedText type="smallBold" style={styles.title} numberOfLines={1}>
+          <ThemedText type="smallBold" style={styles.title} numberOfLines={2}>
             {listing.title}
           </ThemedText>
           <ThemedText type="smallBold" style={{ color: theme.primary }}>
             {currencyFormatter.format(listing.price)}
           </ThemedText>
         </View>
+
+        <SourceBadge source={source} />
 
         {chips.length > 0 && (
           <View style={styles.chipRow}>
@@ -57,13 +78,28 @@ export function ListingCard({ listing }: { listing: Listing }) {
         )}
 
         <View style={styles.footerRow}>
-          <ThemedText type="small" themeColor="textSecondary">
-            {locationLabel || 'Location unavailable'}
+          <ThemedText type="small" themeColor="textSecondary" numberOfLines={1} style={styles.subtitle}>
+            {subtitle}
           </ThemedText>
           <TrustBadge seller={seller} />
         </View>
+
+        {source === 'google' && (
+          <ThemedText type="small" themeColor="textSecondary" style={styles.discoveryNote}>
+            Opens Google&apos;s price comparison page — direct retailer links are next.
+          </ThemedText>
+        )}
       </ThemedView>
     </Pressable>
+  );
+}
+
+function SourceBadge({ source }: { source: string }) {
+  const theme = useTheme();
+  return (
+    <ThemedText type="small" style={{ color: theme.textSecondary, fontWeight: '600' }}>
+      {SOURCE_LABELS[source] ?? source}
+    </ThemedText>
   );
 }
 
@@ -127,5 +163,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    gap: Spacing.two,
+  },
+  subtitle: {
+    flex: 1,
+  },
+  discoveryNote: {
+    fontStyle: 'italic',
   },
 });

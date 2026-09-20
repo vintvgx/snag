@@ -1,54 +1,72 @@
 import { useState } from 'react';
-import { ActivityIndicator, FlatList, Pressable, StyleSheet } from 'react-native';
+import { ActivityIndicator, FlatList, Pressable, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ListingCard } from '@/components/listing-card';
-import { SearchFiltersForm } from '@/components/search-filters';
+import { SearchBar } from '@/components/search-bar';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { useSearchListings } from '@/hooks/use-search-listings';
 import { useTheme } from '@/hooks/use-theme';
-import { SearchFilters } from '@/lib/api-client';
+import { SearchResponse } from '@/lib/api-client';
 
-const DEFAULT_FILTERS: SearchFilters = {
-  zip: '02026',
-  range: 25,
+const SOURCE_LABELS: Record<string, string> = {
+  tesla: 'Tesla',
+  ebay: 'eBay',
+  amazon: 'Amazon',
+  google: 'Google',
+  web: 'Web',
 };
 
-export default function HomeScreen() {
-  const [filters, setFilters] = useState<SearchFilters>(DEFAULT_FILTERS);
-  const { data, isLoading, isFetching, isError, error, refetch } = useSearchListings(filters);
+function formatRelativeTime(iso: string): string {
+  const diffSeconds = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
+  if (diffSeconds < 60) return 'just now';
+  const minutes = Math.round(diffSeconds / 60);
+  if (minutes < 60) return `${minutes} min${minutes === 1 ? '' : 's'} ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  const days = Math.round(hours / 24);
+  return `${days} day${days === 1 ? '' : 's'} ago`;
+}
 
-  console.warn("ERROR:", error?.message)
+export default function HomeScreen() {
+  const [submittedQuery, setSubmittedQuery] = useState('');
+  const { data, isLoading, isFetching, isError, error, refetch } = useSearchListings(submittedQuery);
 
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea} edges={['top']}>
         <FlatList
           data={data?.listings ?? []}
-          keyExtractor={(item) => item.id}
+          keyExtractor={(item) => `${item.source}:${item.id}`}
           renderItem={({ item }) => <ListingCard listing={item} />}
           ItemSeparatorComponent={() => <ThemedView style={styles.separator} />}
+          onRefresh={submittedQuery ? refetch : undefined}
+          refreshing={isFetching && !isLoading}
           ListHeaderComponent={
             <ThemedView style={styles.header}>
               <ThemedText type="subtitle" themeColor="primary" style={styles.wordmark}>
                 SNAG
               </ThemedText>
-              <SearchFiltersForm value={filters} onSubmit={setFilters} isLoading={isFetching} />
-              <ResultsSummary
-                isLoading={isLoading}
-                isError={isError}
-                errorMessage={error?.message}
-                count={data?.count}
-                onRetry={refetch}
-              />
+              <SearchBar value={submittedQuery} onSubmit={setSubmittedQuery} isLoading={isLoading} />
+              {submittedQuery.length > 0 && (
+                <ResultsSummary
+                  isLoading={isLoading}
+                  isError={isError}
+                  errorMessage={error?.message}
+                  data={data}
+                  onRetry={refetch}
+                />
+              )}
             </ThemedView>
           }
           ListEmptyComponent={
             !isLoading && !isError ? (
               <ThemedText type="small" themeColor="textSecondary" style={styles.emptyText}>
-                No matches for these filters yet.
+                {submittedQuery
+                  ? `No matches yet for “${submittedQuery}.”`
+                  : 'Search for an item to see live listings — try one of the suggestions above.'}
               </ThemedText>
             ) : null
           }
@@ -63,13 +81,13 @@ function ResultsSummary({
   isLoading,
   isError,
   errorMessage,
-  count,
+  data,
   onRetry,
 }: {
   isLoading: boolean;
   isError: boolean;
   errorMessage?: string;
-  count?: number;
+  data?: SearchResponse;
   onRetry: () => void;
 }) {
   const theme = useTheme();
@@ -91,15 +109,33 @@ function ResultsSummary({
     );
   }
 
-  if (count != null) {
-    return (
-      <ThemedText type="small" themeColor="textSecondary" style={styles.summarySpacing}>
-        {count} result{count === 1 ? '' : 's'}
-      </ThemedText>
-    );
+  if (!data) {
+    return null;
   }
 
-  return null;
+  return (
+    <View style={styles.summarySpacing}>
+      <ThemedText type="small" themeColor="textSecondary">
+        {data.count} result{data.count === 1 ? '' : 's'} · {data.cached ? 'cached' : 'live'}, checked{' '}
+        {formatRelativeTime(data.last_searched_at)}
+      </ThemedText>
+      <View style={styles.statusRow}>
+        {Object.entries(data.sources_status).map(([source, status]) => (
+          <ThemedText key={source} type="small" themeColor="textSecondary" style={styles.statusChip}>
+            {SOURCE_LABELS[source] ?? source}: {describeStatus(status)}
+          </ThemedText>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function describeStatus(status: string): string {
+  if (status === 'ok') return 'ok';
+  if (status === 'timeout') return 'timed out';
+  if (status.startsWith('unavailable')) return 'not set up yet';
+  if (status.startsWith('schema_drift')) return 'needs attention';
+  return status;
 }
 
 const styles = StyleSheet.create({
@@ -120,6 +156,14 @@ const styles = StyleSheet.create({
   summarySpacing: {
     marginTop: Spacing.one,
     gap: Spacing.one,
+  },
+  statusRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.two,
+  },
+  statusChip: {
+    opacity: 0.8,
   },
   listContent: {
     paddingHorizontal: Spacing.four,

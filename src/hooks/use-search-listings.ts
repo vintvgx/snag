@@ -1,11 +1,14 @@
 import { useQuery } from '@tanstack/react-query';
 
-import { searchTeslaListings, SearchFilters } from '@/lib/api-client';
+import { searchListings } from '@/lib/api-client';
 
-export function useSearchListings(filters: SearchFilters) {
+export function useSearchListings(query: string) {
+  const trimmed = query.trim();
+
   return useQuery({
-    queryKey: ['search', 'tesla', filters],
-    queryFn: () => searchTeslaListings(filters),
+    queryKey: ['search', trimmed],
+    queryFn: () => searchListings(trimmed),
+    enabled: trimmed.length > 0,
     staleTime: 60_000,
     retry: 1,
   });
