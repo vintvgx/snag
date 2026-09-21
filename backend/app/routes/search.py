@@ -19,7 +19,15 @@ bp = Blueprint("search", __name__)
 # this request path. See docs/search-and-tracking-design.md.
 UNIFIED_SOURCES = ["ebay", "amazon", "google"]
 
-PER_SOURCE_TIMEOUT_SECONDS = 8
+# Must stay comfortably above GoogleSerpAdapter's own HTTP timeout (30s) —
+# SerpApi's google_shopping engine is a live scrape and can genuinely take
+# 20s+ on a query it hasn't served recently. This is a last-resort safety
+# net; the adapter's own timeout should fire first with a real error
+# message. Setting this too low (previously 8s) caused good, slow-but-
+# successful searches to be reported as "timeout" with zero results, while
+# the abandoned request kept running in the background and likely still
+# consumed a real API call.
+PER_SOURCE_TIMEOUT_SECONDS = 35
 
 # While we're standing the new integrations up, cap re-fetching the same
 # query to once an hour and remember when it last ran (search-and-tracking

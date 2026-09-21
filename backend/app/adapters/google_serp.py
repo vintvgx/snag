@@ -56,7 +56,11 @@ class GoogleSerpAdapter:
                     "gl": "us",
                     "api_key": api_key,
                 },
-                timeout=20,
+                # SerpApi's google_shopping engine is a live scrape when the
+                # query isn't already warm in SerpApi's own cache — observed
+                # this take >=20s and still succeed. 30s gives real headroom;
+                # the caller (search.py) sets its own timeout above this one.
+                timeout=30,
             )
         except requests.RequestException as exc:
             raise AdapterFetchError(f"SerpApi request failed: {exc}") from exc

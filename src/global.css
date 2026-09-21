@@ -1,3 +1,7 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 :root {
   --font-display:
     Spline Sans, Inter, ui-sans-serif, system-ui, sans-serif, Apple Color Emoji, Segoe UI Emoji,
@@ -6,4 +10,56 @@
     ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, Courier New, monospace;
   --font-rounded: 'SF Pro Rounded', 'Hiragino Maru Gothic ProN', Meiryo, 'MS PGothic', sans-serif;
   --font-serif: Georgia, 'Times New Roman', serif;
+}
+
+/* React Native Reusables / shadcn CSS variables, ported 1:1 from the
+   existing Colors.light/dark palette in src/constants/theme.ts — no new
+   colors introduced. See tailwind.config.js for how these map to
+   Tailwind's color tokens. */
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 0 0% 0%;
+    --card: 240 11.1% 94.7%;
+    --card-foreground: 0 0% 0%;
+    --popover: 240 11.1% 94.7%;
+    --popover-foreground: 0 0% 0%;
+    --primary: 347 77.2% 49.8%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 11.1% 94.7%;
+    --secondary-foreground: 0 0% 0%;
+    --muted: 230 10.7% 89%;
+    --muted-foreground: 220 5.9% 40%;
+    --accent: 230 10.7% 89%;
+    --accent-foreground: 0 0% 0%;
+    --destructive: 347 77.2% 49.8%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 230 10.7% 89%;
+    --input: 230 10.7% 89%;
+    --ring: 347 77.2% 49.8%;
+    --radius: 1rem;
+  }
+
+  .dark:root {
+    --background: 0 0% 0%;
+    --foreground: 0 0% 100%;
+    --card: 225 5.7% 13.7%;
+    --card-foreground: 0 0% 100%;
+    --popover: 225 5.7% 13.7%;
+    --popover-foreground: 0 0% 100%;
+    --primary: 346 96% 60.8%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 225 5.7% 13.7%;
+    --secondary-foreground: 0 0% 100%;
+    --muted: 214 7.1% 19.4%;
+    --muted-foreground: 216 6.8% 71%;
+    --accent: 214 7.1% 19.4%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 346 96% 60.8%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 214 7.1% 19.4%;
+    --input: 214 7.1% 19.4%;
+    --ring: 346 96% 60.8%;
+    --radius: 1rem;
+  }
 }

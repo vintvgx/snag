@@ -9,9 +9,41 @@ from app.adapters.base import AdapterFetchError, AdapterSchemaError
 
 logger = logging.getLogger(__name__)
 
-OAUTH_URL = "https://api.ebay.com/identity/v1/oauth2/token"
-BROWSE_SEARCH_URL = "https://api.ebay.com/buy/browse/v1/item_summary/search"
-BROWSE_ITEM_URL = "https://api.ebay.com/buy/browse/v1/item/{item_id}"
+# Sandbox only ever returns eBay's fake test inventory, never real listings —
+# EBAY_ENV=sandbox exists purely to rehearse the OAuth/parsing pipeline
+# against a sandbox keyset before switching to a Production one. Defaults to
+# production so nothing changes unless explicitly opted into sandbox.
+_EBAY_HOSTS = {
+    "production": "api.ebay.com",
+    "sandbox": "api.sandbox.ebay.com",
+}
+
+
+def _ebay_host() -> str:
+    env = os.environ.get("EBAY_ENV", "production").strip().lower()
+    host = _EBAY_HOSTS.get(env)
+    if host is None:
+        raise AdapterFetchError(
+            f"EBAY_ENV={env!r} is not valid — must be 'production' or 'sandbox'."
+        )
+    return host
+
+
+def _oauth_url() -> str:
+    return f"https://{_ebay_host()}/identity/v1/oauth2/token"
+
+
+def _browse_search_url() -> str:
+    return f"https://{_ebay_host()}/buy/browse/v1/item_summary/search"
+
+
+def _browse_item_url(item_id: str) -> str:
+    return f"https://{_ebay_host()}/buy/browse/v1/item/{item_id}"
+
+
+# eBay's OAuth scope is a fixed identifier string, not an environment-specific
+# URL — it's the same literal for both sandbox and production token requests;
+# only the token endpoint host (_oauth_url) actually changes.
 OAUTH_SCOPE = "https://api.ebay.com/oauth/api_scope"
 
 
@@ -46,7 +78,7 @@ class EbayBrowseAdapter:
 
         try:
             response = requests.post(
-                OAUTH_URL,
+                _oauth_url(),
                 headers={
                     "Content-Type": "application/x-www-form-urlencoded",
                     "Authorization": f"Basic {basic}",
@@ -82,7 +114,7 @@ class EbayBrowseAdapter:
 
         try:
             response = requests.get(
-                BROWSE_SEARCH_URL,
+                _browse_search_url(),
                 headers={
                     "Authorization": f"Bearer {self._access_token()}",
                     "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
@@ -100,7 +132,13 @@ class EbayBrowseAdapter:
             )
 
         payload = response.json()
-        if "itemSummaries" not in payload and "warnings" not in payload:
+        # A genuine zero-match search omits `itemSummaries` entirely but still
+        # reports `total: 0` — that's not schema drift, just no results.
+        if (
+            "itemSummaries" not in payload
+            and "warnings" not in payload
+            and payload.get("total") != 0
+        ):
             raise AdapterSchemaError(
                 "eBay Browse API response missing 'itemSummaries' — response shape "
                 f"may have changed. Keys were: {list(payload.keys())}"
@@ -118,7 +156,7 @@ class EbayBrowseAdapter:
         for item_id in ids:
             try:
                 response = requests.get(
-                    BROWSE_ITEM_URL.format(item_id=item_id),
+                    _browse_item_url(item_id),
                     headers={"Authorization": f"Bearer {token}"},
                     timeout=15,
                 )

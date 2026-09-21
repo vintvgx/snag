@@ -1,3 +1,6 @@
+import '@/global.css';
+
+import { PortalHost } from '@rn-primitives/portal';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
@@ -27,6 +30,9 @@ function ThemedRoot() {
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <AnimatedSplashOverlay />
       <RootNavigator />
+      {/* React Native Reusables' portal-based components (Popover, Dialog,
+          DropdownMenu, Tooltip) render here — must be the last child. */}
+      <PortalHost />
     </ThemeProvider>
   );
 }

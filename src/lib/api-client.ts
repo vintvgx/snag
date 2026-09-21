@@ -75,3 +75,64 @@ export async function searchListings(
 
   return body as SearchResponse;
 }
+
+export type WatchType = 'query' | 'listing';
+export type WatchStatus = 'active' | 'paused';
+
+export type Watch = {
+  id: string;
+  user_id: string;
+  source: string;
+  name: string;
+  watch_type: WatchType;
+  listing_id: string | null;
+  target_price: number | null;
+  hard_filters: Record<string, unknown>;
+  soft_filters: Record<string, unknown>;
+  poll_interval_minutes: number;
+  status: WatchStatus;
+  created_at: string;
+};
+
+export async function listWatches(userId: string): Promise<Watch[]> {
+  const params = new URLSearchParams({ user_id: userId });
+  const response = await fetch(`${API_URL}/watches?${params.toString()}`);
+  const body = await response.json();
+
+  if (!response.ok) {
+    throw new Error(body.detail ?? body.error ?? `Fetching watches failed (${response.status})`);
+  }
+
+  return (body.watches ?? []) as Watch[];
+}
+
+export async function createListingWatch(params: {
+  userId: string;
+  listingId: string;
+  source: string;
+  name: string;
+  targetPrice?: number | null;
+}): Promise<Watch> {
+  const response = await fetch(`${API_URL}/watches`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      user_id: params.userId,
+      watch_type: 'listing',
+      listing_id: params.listingId,
+      source: params.source,
+      name: params.name,
+      target_price: params.targetPrice ?? null,
+    }),
+  });
+  // The backend can return a plain-text/HTML error (e.g. an unhandled 500)
+  // rather than JSON — don't let a failed .json() parse mask the real
+  // failure with a confusing parse error instead of a usable message.
+  const body = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(body.detail ?? body.error ?? `Tracking this item failed (${response.status})`);
+  }
+
+  return body as Watch;
+}

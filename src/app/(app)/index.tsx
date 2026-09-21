@@ -10,6 +10,7 @@ import { Spacing } from '@/constants/theme';
 import { useSearchListings } from '@/hooks/use-search-listings';
 import { useTheme } from '@/hooks/use-theme';
 import { SearchResponse } from '@/lib/api-client';
+import { formatRelativeTime } from '@/lib/format';
 
 const SOURCE_LABELS: Record<string, string> = {
   tesla: 'Tesla',
@@ -18,17 +19,6 @@ const SOURCE_LABELS: Record<string, string> = {
   google: 'Google',
   web: 'Web',
 };
-
-function formatRelativeTime(iso: string): string {
-  const diffSeconds = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
-  if (diffSeconds < 60) return 'just now';
-  const minutes = Math.round(diffSeconds / 60);
-  if (minutes < 60) return `${minutes} min${minutes === 1 ? '' : 's'} ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
-  const days = Math.round(hours / 24);
-  return `${days} day${days === 1 ? '' : 's'} ago`;
-}
 
 export default function HomeScreen() {
   const [submittedQuery, setSubmittedQuery] = useState('');
