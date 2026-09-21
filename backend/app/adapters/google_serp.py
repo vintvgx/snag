@@ -133,6 +133,7 @@ class GoogleSerpAdapter:
                 # trust scoring as if it were the latter (see get_seller).
                 "product_rating": raw.get("rating"),
                 "product_reviews": raw.get("reviews"),
+                "image_url": raw.get("thumbnail"),
             },
             "location": {"city": None, "state": None, "zip": None},
             "url": url,

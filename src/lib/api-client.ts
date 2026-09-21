@@ -48,6 +48,10 @@ export type SourceStatus = string;
 export type SearchResponse = {
   query: string;
   cached: boolean;
+  // true while a slower source (Google/SerpApi) is still running in the
+  // background — the caller should keep polling the same query until this
+  // flips to false rather than treating the response as final.
+  in_progress: boolean;
   last_searched_at: string;
   sources_status: Record<string, SourceStatus>;
   count: number;

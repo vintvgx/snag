@@ -220,11 +220,14 @@ class AmazonPAAPIAdapter:
         )
         merchant_name = ((listing or {}).get("MerchantInfo") or {}).get("Name")
         condition = ((listing or {}).get("Condition") or {}).get("Value")
+        image_url = (
+            (((raw.get("Images") or {}).get("Primary") or {}).get("Medium") or {}).get("URL")
+        )
 
         return {
             "price": float(price),
             "title": title,
-            "attrs": {"brand": brand, "condition": condition},
+            "attrs": {"brand": brand, "condition": condition, "image_url": image_url},
             "location": {"city": None, "state": None, "zip": None},
             "url": raw.get("DetailPageURL"),
             "seller_id": merchant_name or "amazon",

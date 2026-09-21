@@ -97,42 +97,55 @@ function ListingCardBody({ listing }: { listing: Listing }) {
   const { attrs, location, seller, source } = listing;
 
   const chips = buildChips(attrs);
+  const imageUrl = getImageUrl(attrs);
   const locationLabel = [location.city, location.state].filter(Boolean).join(', ');
   const subtitle = locationLabel || seller.display_name || 'Online listing';
 
   return (
     <ThemedView type="backgroundElement" style={styles.card}>
-      <View style={styles.headerRow}>
-        <ThemedText type="smallBold" style={styles.title} numberOfLines={2}>
-          {listing.title}
-        </ThemedText>
-        <ThemedText type="smallBold" style={{ color: theme.primary }}>
-          {currencyFormatter.format(listing.price)}
-        </ThemedText>
-      </View>
+      <View style={styles.cardRow}>
+        {imageUrl && (
+          <Image source={{ uri: imageUrl }} style={styles.thumbnail} contentFit="cover" />
+        )}
 
-      <SourceBadge source={source} />
+        <View style={styles.cardContent}>
+          <View style={styles.headerRow}>
+            <ThemedText type="smallBold" style={styles.title} numberOfLines={2}>
+              {listing.title}
+            </ThemedText>
+            <ThemedText type="smallBold" style={{ color: theme.primary }}>
+              {currencyFormatter.format(listing.price)}
+            </ThemedText>
+          </View>
 
-      {chips.length > 0 && (
-        <View style={styles.chipRow}>
-          {chips.map((chip) => (
-            <Chip key={chip} label={chip} />
-          ))}
+          <SourceBadge source={source} />
+
+          {chips.length > 0 && (
+            <View style={styles.chipRow}>
+              {chips.map((chip) => (
+                <Chip key={chip} label={chip} />
+              ))}
+            </View>
+          )}
+
+          <View style={styles.footerRow}>
+            <ThemedText
+              type="small"
+              themeColor="textSecondary"
+              numberOfLines={1}
+              style={styles.subtitle}>
+              {subtitle}
+            </ThemedText>
+            <TrustBadge seller={seller} />
+          </View>
+
+          {source === 'google' && (
+            <ThemedText type="small" themeColor="textSecondary" style={styles.discoveryNote}>
+              Opens Google&apos;s price comparison page — direct retailer links are next.
+            </ThemedText>
+          )}
         </View>
-      )}
-
-      <View style={styles.footerRow}>
-        <ThemedText type="small" themeColor="textSecondary" numberOfLines={1} style={styles.subtitle}>
-          {subtitle}
-        </ThemedText>
-        <TrustBadge seller={seller} />
       </View>
-
-      {source === 'google' && (
-        <ThemedText type="small" themeColor="textSecondary" style={styles.discoveryNote}>
-          Opens Google&apos;s price comparison page — direct retailer links are next.
-        </ThemedText>
-      )}
     </ThemedView>
   );
 }
@@ -250,6 +263,18 @@ const styles = StyleSheet.create({
   card: {
     borderRadius: Spacing.three,
     padding: Spacing.three,
+  },
+  cardRow: {
+    flexDirection: 'row',
+    gap: Spacing.three,
+  },
+  thumbnail: {
+    width: 72,
+    height: 72,
+    borderRadius: Spacing.two,
+  },
+  cardContent: {
+    flex: 1,
     gap: Spacing.two,
   },
   headerRow: {

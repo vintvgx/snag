@@ -105,10 +105,13 @@ function ResultsSummary({
 
   return (
     <View style={styles.summarySpacing}>
-      <ThemedText type="small" themeColor="textSecondary">
-        {data.count} result{data.count === 1 ? '' : 's'} · {data.cached ? 'cached' : 'live'}, checked{' '}
-        {formatRelativeTime(data.last_searched_at)}
-      </ThemedText>
+      <View style={styles.summaryHeaderRow}>
+        <ThemedText type="small" themeColor="textSecondary">
+          {data.count} result{data.count === 1 ? '' : 's'} · {data.cached ? 'cached' : 'live'}, checked{' '}
+          {formatRelativeTime(data.last_searched_at)}
+        </ThemedText>
+        {data.in_progress && <ActivityIndicator size="small" />}
+      </View>
       <View style={styles.statusRow}>
         {Object.entries(data.sources_status).map(([source, status]) => (
           <ThemedText key={source} type="small" themeColor="textSecondary" style={styles.statusChip}>
@@ -122,6 +125,7 @@ function ResultsSummary({
 
 function describeStatus(status: string): string {
   if (status === 'ok') return 'ok';
+  if (status === 'pending') return 'still searching…';
   if (status === 'timeout') return 'timed out';
   if (status.startsWith('unavailable')) return 'not set up yet';
   if (status.startsWith('schema_drift')) return 'needs attention';
@@ -146,6 +150,11 @@ const styles = StyleSheet.create({
   summarySpacing: {
     marginTop: Spacing.one,
     gap: Spacing.one,
+  },
+  summaryHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
   },
   statusRow: {
     flexDirection: 'row',
